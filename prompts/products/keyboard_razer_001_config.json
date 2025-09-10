@@ -1,0 +1,22 @@
+{
+  "item_id": "keyboard_razer_001",
+  "product_info": {
+    "title": "雷蛇黑寡妇蜘蛛V3机械键盘",
+    "desc": "雷蛇绿轴机械键盘，RGB背光，全尺寸布局，铝制上盖，游戏专用",
+    "soldPrice": 899
+  },
+  "settings": {
+    "max_discount": 0.4,
+    "selling_points": [
+      "雷蛇绿轴",
+      "RGB炫彩背光",
+      "游戏专用",
+      "铝制工艺"
+    ],
+    "target_customers": "游戏玩家和码农",
+    "price_strategy": "flexible",
+    "urgency_level": "medium",
+    "service_extras": []
+  },
+  "created_time": "/Users/q/Desktop/ymcc/XianyuAutoAgent"
+}

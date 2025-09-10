@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import base64
 import json
 import asyncio
@@ -21,7 +22,7 @@ class XianyuLive:
         self.base_url = 'wss://wss-goofish.dingtalk.com/'
         self.cookies_str = cookies_str
         self.cookies = trans_cookies(cookies_str)
-        self.xianyu.session.cookies.update(self.cookies)  # 直接使用 session.cookies.update
+        self.xianyu.session.cookies.update(self.cookies)
         self.myid = self.cookies['unb']
         self.device_id = generate_device_id(self.myid)
         self.context_manager = ChatContextManager()
@@ -429,11 +430,12 @@ class XianyuLive:
             
             # 获取完整的对话上下文
             context = self.context_manager.get_context_by_chat(chat_id)
-            # 生成回复
+            # 生成回复 (传入商品ID以使用个性化提示词)
             bot_reply = bot.generate_reply(
                 send_message,
                 item_description,
-                context=context
+                context=context,
+                item_id=item_id
             )
             
             # 检查是否为价格意图，如果是则增加议价次数

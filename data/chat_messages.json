@@ -1,0 +1,18 @@
+{
+  "test_chat_001": [
+    {
+      "user_id": "user123",
+      "item_id": "item456",
+      "role": "user",
+      "content": "这个商品怎么样？",
+      "timestamp": "2025-09-05T15:54:18.158227"
+    },
+    {
+      "user_id": "seller123",
+      "item_id": "item456",
+      "role": "assistant",
+      "content": "质量很好，支持7天退换",
+      "timestamp": "2025-09-05T15:54:18.158675"
+    }
+  ]
+}

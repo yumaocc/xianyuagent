@@ -2,31 +2,90 @@ import time
 import os
 import re
 import sys
+import urllib3
+import random
 
 import requests
 from loguru import logger
 from utils.xianyu_utils import generate_sign
+
+# 禁用SSL警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class XianyuApis:
     def __init__(self):
         self.url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/'
         self.session = requests.Session()
+        
+        # 禁用代理和配置SSL
+        self.session.proxies = {}
+        self.session.trust_env = False
+        self.session.verify = False
+        
+        # 随机选择User-Agent以减少被检测的几率
+        user_agents = [
+            # Chrome - Windows
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            
+            # Chrome - macOS
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            
+            # Safari - macOS
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+            
+            # Firefox - Windows
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+            'Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            
+            # Firefox - macOS
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 13.6; rv:122.0) Gecko/20100101 Firefox/122.0',
+            
+            # Edge - Windows
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+            'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+            
+            # Chrome - Linux
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            
+            # 移动端 User-Agent (有些网站对移动端检测较松)
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        ]
+        selected_ua = random.choice(user_agents)
+        
         self.session.headers.update({
-            'accept': 'application/json',
-            'accept-language': 'zh-CN,zh;q=0.9',
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'accept-encoding': 'gzip, deflate, br',
             'cache-control': 'no-cache',
             'origin': 'https://www.goofish.com',
             'pragma': 'no-cache',
-            'priority': 'u=1, i',
-            'referer': 'https://www.goofish.com/',
-            'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+            'referer': 'https://www.goofish.com/pc/message',
+            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
             'sec-fetch-mode': 'cors',
             'sec-fetch-site': 'same-site',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+            'user-agent': selected_ua,
+            'x-requested-with': 'XMLHttpRequest',
         })
         
     def clear_duplicate_cookies(self):
@@ -85,6 +144,16 @@ class XianyuApis:
                 logger.warning(".env文件中未找到COOKIES_STR配置项")
         except Exception as e:
             logger.warning(f"更新.env文件失败: {str(e)}")
+    
+    def get_smart_delay(self, retry_count, base_delay=2, is_protection_error=False):
+        """智能延时策略"""
+        if is_protection_error:
+            # 防护机制触发时使用指数退避
+            delay = base_delay * (2 ** retry_count) + random.uniform(0, 5)
+            return min(delay, 60)  # 最大60秒
+        else:
+            # 普通错误使用线性增长
+            return base_delay + retry_count * 2 + random.uniform(0, 3)
         
     def hasLogin(self, retry_count=0):
         """调用hasLogin.do接口进行登录状态检查"""
@@ -129,12 +198,16 @@ class XianyuApis:
                 return True
             else:
                 logger.warning(f"Login失败: {res_json}")
-                time.sleep(0.5)
+                delay = random.uniform(2, 5) + retry_count * 2  # 递增延时
+                logger.debug(f"等待 {delay:.1f} 秒后重试...")
+                time.sleep(delay)
                 return self.hasLogin(retry_count + 1)
                 
         except Exception as e:
             logger.error(f"Login请求异常: {str(e)}")
-            time.sleep(0.5)
+            delay = random.uniform(3, 6) + retry_count * 2
+            logger.debug(f"请求异常，等待 {delay:.1f} 秒后重试...")
+            time.sleep(delay)
             return self.hasLogin(retry_count + 1)
 
     def get_token(self, device_id, retry_count=0):
@@ -182,12 +255,20 @@ class XianyuApis:
                 ret_value = res_json.get('ret', [])
                 # 检查ret是否包含成功信息
                 if not any('SUCCESS::调用成功' in ret for ret in ret_value):
-                    logger.warning(f"Token API调用失败，错误信息: {ret_value}")
+                    # 检查是否是防护机制错误
+                    if any('RGV587_ERROR::SM' in str(ret) for ret in ret_value):
+                        delay = random.uniform(5, 15) + retry_count * 5  # 防护机制延时更长
+                        logger.warning(f"触发防护机制，等待 {delay:.1f} 秒后重试...")
+                    else:
+                        delay = random.uniform(2, 4) + retry_count * 2
+                        logger.warning(f"Token API调用失败，错误信息: {ret_value}")
+                    
                     # 处理响应中的Set-Cookie
                     if 'Set-Cookie' in response.headers:
-                        logger.debug("检测到Set-Cookie，更新cookie")  # 降级为DEBUG并简化
+                        logger.debug("检测到Set-Cookie，更新cookie")
                         self.clear_duplicate_cookies()
-                    time.sleep(0.5)
+                    
+                    time.sleep(delay)
                     return self.get_token(device_id, retry_count + 1)
                 else:
                     logger.info("Token获取成功")
@@ -264,3 +345,79 @@ class XianyuApis:
             logger.error(f"商品信息API请求异常: {str(e)}")
             time.sleep(0.5)
             return self.get_item_info(item_id, retry_count + 1)
+
+    def get_user_items(self, page=1, page_size=20, status='ALL', retry_count=0):
+        """获取用户发布的商品列表
+        
+        Args:
+            page: 页码，从1开始
+            page_size: 每页数量
+            status: 商品状态 ALL/ON_SALE/SOLD_OUT
+            retry_count: 重试次数
+            
+        Returns:
+            dict: 包含商品列表的响应数据
+        """
+        if retry_count >= 3:
+            logger.error("获取用户商品列表失败，重试次数过多")
+            return {"error": "获取用户商品列表失败，重试次数过多"}
+            
+        params = {
+            'jsv': '2.7.2',
+            'appKey': '34839810',
+            't': str(int(time.time()) * 1000),
+            'sign': '',
+            'v': '1.0',
+            'type': 'originaljson',
+            'accountSite': 'xianyu',
+            'dataType': 'json',
+            'timeout': '20000',
+            'api': 'mtop.taobao.idle.user.page.my.items',
+            'sessionOption': 'AutoLoginOnly',
+        }
+        
+        # 构建请求数据
+        data_val = f'{{"page":{page},"pageSize":{page_size},"status":"{status}"}}'
+        data = {
+            'data': data_val,
+        }
+        
+        # 获取token并生成签名
+        token = self.session.cookies.get('_m_h5_tk', '').split('_')[0]
+        sign = generate_sign(params['t'], token, data_val)
+        params['sign'] = sign
+        
+        try:
+            response = self.session.post(
+                'https://h5api.m.goofish.com/h5/mtop.taobao.idle.user.page.my.items/1.0/', 
+                params=params, 
+                data=data
+            )
+            
+            res_json = response.json()
+            
+            # 检查返回状态
+            if isinstance(res_json, dict):
+                ret_value = res_json.get('ret', [])
+                # 检查ret是否包含成功信息
+                if not any('SUCCESS::调用成功' in ret for ret in ret_value):
+                    logger.warning(f"用户商品列表API调用失败，错误信息: {ret_value}")
+                    
+                    # 处理响应中的Set-Cookie
+                    if 'Set-Cookie' in response.headers:
+                        logger.debug("检测到Set-Cookie，更新cookie")
+                        self.clear_duplicate_cookies()
+                        
+                    time.sleep(random.uniform(1, 3))
+                    return self.get_user_items(page, page_size, status, retry_count + 1)
+                else:
+                    logger.debug(f"用户商品列表获取成功，页码: {page}")
+                    return res_json
+            else:
+                logger.error(f"用户商品列表API返回格式异常: {res_json}")
+                return self.get_user_items(page, page_size, status, retry_count + 1)
+                
+        except Exception as e:
+            logger.error(f"用户商品列表API请求异常: {str(e)}")
+            time.sleep(random.uniform(1, 2))
+            return self.get_user_items(page, page_size, status, retry_count + 1)

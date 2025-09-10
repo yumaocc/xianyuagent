@@ -56,9 +56,12 @@ COPY prompts/price_prompt_example.txt prompts/price_prompt.txt
 COPY prompts/tech_prompt_example.txt prompts/tech_prompt.txt
 COPY prompts/default_prompt_example.txt prompts/default_prompt.txt
 
-# 只复制绝对必要的文件
+# 复制所有必要的文件
 COPY main.py XianyuAgent.py XianyuApis.py context_manager.py ./
+COPY web_api.py web_admin_api.py start_web.py ./
+COPY product_publisher.py product_prompt_manager.py publish_tool.py ./
 COPY utils/ utils/
+COPY static/ static/
 
 # 容器启动时运行的命令
 CMD ["python", "main.py"]

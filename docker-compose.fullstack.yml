@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # 后端API服务
+  xianyu-api:
+    build: .
+    container_name: xianyu-api
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./prompts:/app/prompts
+      - ./.env:/app/.env
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+    networks:
+      - xianyu-network
+    ports:
+      - "5000:5000"
+    command: ["python", "start_web.py"]
+
+  # AI客服服务
+  xianyu-agent:
+    build: .
+    container_name: xianyu-agent
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./prompts:/app/prompts
+      - ./.env:/app/.env
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    networks:
+      - xianyu-network
+    depends_on:
+      - xianyu-api
+    command: ["python", "main.py"]
+
+  # 前端Web界面
+  xianyu-web:
+    build: ../xianyu-admin-web
+    container_name: xianyu-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - xianyu-network
+    depends_on:
+      - xianyu-api
+
+networks:
+  xianyu-network:
+    driver: bridge

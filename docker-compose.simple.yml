@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # 闲鱼AI客服机器人主服务
+  xianyu-agent:
+    build: .
+    container_name: xianyu-agent
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./prompts:/app/prompts
+      - ./.env:/app/.env
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    networks:
+      - xianyu-network
+    command: ["python", "main.py"]
+
+  # Web管理界面服务
+  xianyu-web:
+    build: .
+    container_name: xianyu-web
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - ./prompts:/app/prompts
+      - ./.env:/app/.env
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+    networks:
+      - xianyu-network
+    command: ["python", "start_web.py"]
+
+networks:
+  xianyu-network:
+    driver: bridge

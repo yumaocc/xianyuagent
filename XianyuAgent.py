@@ -3,6 +3,7 @@ from typing import List, Dict
 import os
 from openai import OpenAI
 from loguru import logger
+from product_prompt_manager import ProductPromptManager
 
 
 class XianyuReplyBot:
@@ -12,6 +13,9 @@ class XianyuReplyBot:
             api_key=os.getenv("API_KEY"),
             base_url=os.getenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         )
+        # 初始化商品提示词管理器
+        self.product_prompt_manager = ProductPromptManager()
+        
         self._init_system_prompts()
         self._init_agents()
         self.router = IntentRouter(self.agents['classify'])
@@ -68,29 +72,55 @@ class XianyuReplyBot:
         user_assistant_msgs = [msg for msg in context if msg['role'] in ['user', 'assistant']]
         return "\n".join([f"{msg['role']}: {msg['content']}" for msg in user_assistant_msgs])
 
-    def generate_reply(self, user_msg: str, item_desc: str, context: List[Dict]) -> str:
-        """生成回复主流程"""
+    def generate_reply(self, user_msg: str, item_desc: str, context: List[Dict], item_id: str = None) -> str:
+        """生成回复主流程 - 支持商品个性化提示词"""
         # 记录用户消息
         # logger.debug(f'用户所发消息: {user_msg}')
         
         formatted_context = self.format_history(context)
         # logger.debug(f'对话历史: {formatted_context}')
         
-        # 1. 路由决策
-        detected_intent = self.router.detect(user_msg, item_desc, formatted_context)
+        # 1. 路由决策 (使用个性化分类提示词)
+        classify_prompt = self.classify_prompt
+        if item_id:
+            custom_classify_prompt = self.product_prompt_manager.get_product_prompt(item_id, 'classify')
+            if custom_classify_prompt:
+                classify_prompt = custom_classify_prompt
+                logger.info(f"使用商品{item_id}的个性化分类提示词")
+        
+        # 临时更新分类器
+        temp_classifier = ClassifyAgent(self.client, classify_prompt, self._safe_filter)
+        temp_router = IntentRouter(temp_classifier)
+        detected_intent = temp_router.detect(user_msg, item_desc, formatted_context)
 
-
-
-        # 2. 获取对应Agent
-
+        # 2. 获取对应Agent (使用个性化提示词)
         internal_intents = {'classify'}  # 定义不对外开放的Agent
 
         if detected_intent in self.agents and detected_intent not in internal_intents:
-            agent = self.agents[detected_intent]
+            # 获取个性化提示词
+            agent_prompt = getattr(self, f'{detected_intent}_prompt')
+            if item_id:
+                custom_prompt = self.product_prompt_manager.get_product_prompt(item_id, detected_intent)
+                if custom_prompt:
+                    agent_prompt = custom_prompt
+                    logger.info(f"使用商品{item_id}的个性化{detected_intent}提示词")
+            
+            # 创建临时Agent使用个性化提示词
+            agent_class = type(self.agents[detected_intent])
+            agent = agent_class(self.client, agent_prompt, self._safe_filter)
+            
             logger.info(f'意图识别完成: {detected_intent}')
             self.last_intent = detected_intent  # 保存当前意图
         else:
-            agent = self.agents['default']
+            # 默认Agent也支持个性化
+            default_prompt = self.default_prompt
+            if item_id:
+                custom_prompt = self.product_prompt_manager.get_product_prompt(item_id, 'default')
+                if custom_prompt:
+                    default_prompt = custom_prompt
+                    logger.info(f"使用商品{item_id}的个性化default提示词")
+            
+            agent = DefaultAgent(self.client, default_prompt, self._safe_filter)
             logger.info(f'意图识别完成: default')
             self.last_intent = 'default'  # 保存当前意图
         
