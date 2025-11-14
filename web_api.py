@@ -20,6 +20,7 @@ from XianyuApis import XianyuApis
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
 from product_publisher import XianyuProductPublisher
+from delivery_manager import DeliveryManager
 from utils.xianyu_utils import trans_cookies
 from main import XianyuLive
 
@@ -66,6 +67,7 @@ class XianyuWebAPI:
         self.bot = XianyuReplyBot()
         self.context_manager = ChatContextManager()
         self.product_publisher = XianyuProductPublisher(self.xianyu_apis)
+        self.delivery_manager = DeliveryManager()
     
     def _register_routes(self):
         """注册API路由"""
@@ -100,6 +102,15 @@ class XianyuWebAPI:
         self.app.route('/api/products/publish', methods=['POST'])(self.publish_product)
         self.app.route('/api/products/publish/batch', methods=['POST'])(self.batch_publish_products)
         self.app.route('/api/products/records', methods=['GET'])(self.get_publish_records)
+
+        # 发货管理接口
+        self.app.route('/api/delivery/configs', methods=['GET'])(self.get_delivery_configs)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['GET'])(self.get_delivery_config)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['POST'])(self.save_delivery_config)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['PUT'])(self.update_delivery_config)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['DELETE'])(self.delete_delivery_config)
+        self.app.route('/api/delivery/records', methods=['GET'])(self.get_delivery_records)
+        self.app.route('/api/delivery/stats', methods=['GET'])(self.get_delivery_stats)
         
         # 统计分析接口
         self.app.route('/api/analytics/overview', methods=['GET'])(self.get_analytics_overview)
@@ -668,24 +679,169 @@ class XianyuWebAPI:
                 'message': str(e)
             }), 500
     
+    # ========== 发货管理接口 ==========
+
+    def get_delivery_configs(self):
+        """获取所有发货配置"""
+        try:
+            enabled_only = request.args.get('enabled_only', 'false').lower() == 'true'
+            configs = self.delivery_manager.list_delivery_configs(enabled_only=enabled_only)
+
+            return jsonify({
+                'status': 'success',
+                'data': configs
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    def get_delivery_config(self, item_id):
+        """获取单个商品的发货配置"""
+        try:
+            config = self.delivery_manager.get_delivery_config(item_id)
+
+            if config:
+                return jsonify({
+                    'status': 'success',
+                    'data': config
+                })
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': '未找到该商品的发货配置'
+                }), 404
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    def save_delivery_config(self, item_id):
+        """保存发货配置"""
+        try:
+            data = request.get_json()
+
+            # 验证必填字段
+            if not data.get('delivery_type'):
+                return jsonify({
+                    'status': 'error',
+                    'message': '发货类型不能为空'
+                }), 400
+
+            if not data.get('delivery_content'):
+                return jsonify({
+                    'status': 'error',
+                    'message': '发货内容不能为空'
+                }), 400
+
+            # 保存配置
+            success = self.delivery_manager.save_delivery_config(item_id, data)
+
+            if success:
+                return jsonify({
+                    'status': 'success',
+                    'message': '发货配置保存成功'
+                })
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': '发货配置保存失败'
+                }), 500
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    def update_delivery_config(self, item_id):
+        """更新发货配置（与保存使用相同逻辑）"""
+        return self.save_delivery_config(item_id)
+
+    def delete_delivery_config(self, item_id):
+        """删除发货配置"""
+        try:
+            success = self.delivery_manager.delete_delivery_config(item_id)
+
+            if success:
+                return jsonify({
+                    'status': 'success',
+                    'message': '发货配置删除成功'
+                })
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': '发货配置不存在或删除失败'
+                }), 404
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    def get_delivery_records(self):
+        """获取发货记录"""
+        try:
+            item_id = request.args.get('item_id')
+            buyer_id = request.args.get('buyer_id')
+            limit = request.args.get('limit', 100, type=int)
+
+            records = self.delivery_manager.get_delivery_records(
+                item_id=item_id,
+                buyer_id=buyer_id,
+                limit=limit
+            )
+
+            return jsonify({
+                'status': 'success',
+                'data': records
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    def get_delivery_stats(self):
+        """获取发货统计信息"""
+        try:
+            stats = self.delivery_manager.get_delivery_stats()
+
+            return jsonify({
+                'status': 'success',
+                'data': stats
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
     # ========== 日志接口 ==========
-    
+
     def get_logs(self):
         """获取日志"""
         try:
             lines = request.args.get('lines', 100, type=int)
             level = request.args.get('level', 'INFO')
-            
+
             # TODO: 实现日志读取逻辑
             logs = [
                 {'timestamp': time.time(), 'level': 'INFO', 'message': '示例日志消息'}
             ]
-            
+
             return jsonify({
                 'status': 'success',
                 'data': logs
             })
-            
+
         except Exception as e:
             return jsonify({
                 'status': 'error',

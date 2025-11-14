@@ -33,7 +33,9 @@ class XianyuReplyBot:
 
     def _init_system_prompts(self):
         """初始化各Agent专用提示词，直接从文件中加载"""
-        prompt_dir = "prompts"
+        # 使用脚本所在目录的绝对路径
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        prompt_dir = os.path.join(script_dir, "prompts")
         
         try:
             # 加载分类提示词

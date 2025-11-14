@@ -14,6 +14,7 @@ import sys
 from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, generate_device_id, decrypt
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
+from delivery_manager import DeliveryManager
 
 
 class XianyuLive:
@@ -26,6 +27,7 @@ class XianyuLive:
         self.myid = self.cookies['unb']
         self.device_id = generate_device_id(self.myid)
         self.context_manager = ChatContextManager()
+        self.delivery_manager = DeliveryManager()
         
         # 心跳相关配置
         self.heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "15"))  # 心跳间隔，默认15秒
@@ -333,7 +335,7 @@ class XianyuLive:
                 return
 
             try:
-                # 判断是否为订单消息,需要自行编写付款后的逻辑
+                # 判断是否为订单消息
                 if message['3']['redReminder'] == '等待买家付款':
                     user_id = message['1'].split('@')[0]
                     user_url = f'https://www.goofish.com/personal?userId={user_id}'
@@ -345,9 +347,26 @@ class XianyuLive:
                     logger.info(f'买家 {user_url} 交易关闭')
                     return
                 elif message['3']['redReminder'] == '等待卖家发货':
+                    # 买家已付款，等待卖家发货 - 触发自动发货
                     user_id = message['1'].split('@')[0]
                     user_url = f'https://www.goofish.com/personal?userId={user_id}'
-                    logger.info(f'交易成功 {user_url} 等待卖家发货')
+                    chat_id = message['1']['2'].split('@')[0] if '2' in message['1'] else None
+
+                    # 尝试获取商品ID
+                    item_id = None
+                    if '10' in message['1'] and 'reminderUrl' in message['1']['10']:
+                        url_info = message['1']['10']['reminderUrl']
+                        if "itemId=" in url_info:
+                            item_id = url_info.split("itemId=")[1].split("&")[0]
+
+                    logger.info(f'💰 交易成功 {user_url} 等待卖家发货 - 商品ID: {item_id}')
+
+                    # 自动发货处理
+                    if item_id and chat_id:
+                        await self.handle_auto_delivery(websocket, chat_id, user_id, item_id)
+                    else:
+                        logger.warning(f"无法自动发货：缺少必要信息 (item_id={item_id}, chat_id={chat_id})")
+
                     return
 
             except:
@@ -453,6 +472,94 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"处理消息时发生错误: {str(e)}")
             logger.debug(f"原始消息: {message_data}")
+
+    async def handle_auto_delivery(self, websocket, chat_id, buyer_id, item_id):
+        """
+        处理自动发货
+
+        Args:
+            websocket: WebSocket连接
+            chat_id: 会话ID
+            buyer_id: 买家ID
+            item_id: 商品ID
+        """
+        try:
+            logger.info(f"📦 开始处理自动发货: 商品{item_id}, 买家{buyer_id}")
+
+            # 1. 获取发货配置
+            delivery_config = self.delivery_manager.get_delivery_config(item_id)
+
+            if not delivery_config:
+                logger.info(f"商品{item_id}未配置自动发货，跳过")
+                return
+
+            if not delivery_config.get('is_enabled', False):
+                logger.info(f"商品{item_id}的自动发货已禁用，跳过")
+                return
+
+            # 2. 检查库存
+            if not self.delivery_manager.check_stock(item_id):
+                logger.warning(f"❌ 商品{item_id}库存不足，无法自动发货")
+                # 发送库存不足提醒
+                await self.send_msg(websocket, chat_id, buyer_id, "抱歉，该商品暂时缺货，请联系卖家处理。")
+                # 记录失败
+                self.delivery_manager.record_delivery({
+                    'item_id': item_id,
+                    'buyer_id': buyer_id,
+                    'chat_id': chat_id,
+                    'delivery_type': delivery_config.get('delivery_type', 'unknown'),
+                    'delivery_content': '',
+                    'status': 'failed',
+                    'error_message': '库存不足'
+                })
+                return
+
+            # 3. 获取商品信息（用于消息模板替换）
+            item_info = self.context_manager.get_item_info(item_id)
+            if not item_info:
+                logger.info(f"从API获取商品信息: {item_id}")
+                api_result = self.xianyu.get_item_info(item_id)
+                if 'data' in api_result and 'itemDO' in api_result['data']:
+                    item_info = api_result['data']['itemDO']
+                    self.context_manager.save_item_info(item_id, item_info)
+
+            # 4. 构建发货消息
+            delivery_message = self.delivery_manager.build_delivery_message(delivery_config, item_info)
+
+            # 5. 发送发货消息
+            logger.info(f"📤 发送发货消息给买家{buyer_id}")
+            await self.send_msg(websocket, chat_id, buyer_id, delivery_message)
+
+            # 6. 记录发货成功
+            self.delivery_manager.record_delivery({
+                'item_id': item_id,
+                'buyer_id': buyer_id,
+                'chat_id': chat_id,
+                'delivery_type': delivery_config.get('delivery_type', 'unknown'),
+                'delivery_content': delivery_config.get('delivery_content', ''),
+                'status': 'success'
+            })
+
+            # 7. 减少库存
+            self.delivery_manager.decrease_stock(item_id, 1)
+
+            logger.info(f"✅ 自动发货成功: 商品{item_id}, 买家{buyer_id}")
+
+        except Exception as e:
+            logger.error(f"自动发货失败: {e}")
+            # 记录失败
+            try:
+                self.delivery_manager.record_delivery({
+                    'item_id': item_id,
+                    'buyer_id': buyer_id,
+                    'chat_id': chat_id,
+                    'delivery_type': 'unknown',
+                    'delivery_content': '',
+                    'status': 'failed',
+                    'error_message': str(e)
+                })
+            except:
+                pass
 
     async def send_heartbeat(self, ws):
         """发送心跳包并等待响应"""
