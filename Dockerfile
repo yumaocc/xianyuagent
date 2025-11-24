@@ -1,24 +1,4 @@
-FROM python:3.10-alpine AS builder
-
-WORKDIR /app
-
-# 只安装构建所需的依赖
-RUN apk add --no-cache --virtual .build-deps \
-    gcc \
-    musl-dev \
-    libffi-dev \
-    build-base
-
-# 创建虚拟环境并安装依赖
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# 复制依赖文件并安装
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 第二阶段：最终镜像
-FROM python:3.10-alpine
+FROM python:3.10-slim
 
 # 添加元数据标签
 LABEL maintainer="coderxiu<coderxiu@qq.com>"
@@ -29,23 +9,19 @@ LABEL version="2.0"
 ENV TZ=Asia/Shanghai \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
-    PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# 只安装运行时必要的包
-RUN apk add --no-cache \
-    tzdata \
-    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
-    && echo Asia/Shanghai > /etc/timezone \
-    # 清理apk缓存
-    && rm -rf /var/cache/apk/*
+# 创建时区目录和文件
+RUN mkdir -p /usr/share/zoneinfo/Asia && \
+    echo "CST-8" > /etc/timezone
 
 # 设置工作目录
 WORKDIR /app
 
-# 从构建阶段复制虚拟环境
-COPY --from=builder /opt/venv /opt/venv
+# 复制依赖文件并安装
+COPY requirements.txt .
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # 创建必要的目录
 RUN mkdir -p data prompts
@@ -58,7 +34,7 @@ COPY prompts/default_prompt_example.txt prompts/default_prompt.txt
 
 # 复制所有必要的文件
 COPY main.py XianyuAgent.py XianyuApis.py context_manager.py ./
-COPY web_api.py web_admin_api.py start_web.py ./
+COPY web_api.py web_admin_api.py start_web.py delivery_manager.py ./
 COPY product_publisher.py product_prompt_manager.py publish_tool.py ./
 COPY utils/ utils/
 COPY static/ static/

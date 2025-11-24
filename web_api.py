@@ -31,10 +31,10 @@ class XianyuWebAPI:
     def __init__(self):
         self.app = Flask(__name__)
         CORS(self.app)  # 允许跨域访问
-        
+
         # 初始化组件
         self._init_components()
-        
+
         # 系统状态
         self.system_status = {
             'running': False,
@@ -44,11 +44,11 @@ class XianyuWebAPI:
             'message_count': 0,
             'error_count': 0
         }
-        
+
         # XianyuLive实例
         self.xianyu_live = None
         self.live_thread = None
-        
+
         # 注册路由
         self._register_routes()
     
@@ -71,7 +71,15 @@ class XianyuWebAPI:
     
     def _register_routes(self):
         """注册API路由"""
-        
+
+        # 认证接口（同时支持有无 /api 前缀）
+        self.app.route('/api/auth/login', methods=['POST'])(self.admin_login)
+        self.app.route('/auth/login', methods=['POST'])(self.admin_login)
+        self.app.route('/api/auth/logout', methods=['POST'])(self.admin_logout)
+        self.app.route('/auth/logout', methods=['POST'])(self.admin_logout)
+        self.app.route('/api/auth/me', methods=['GET'])(self.get_current_user)
+        self.app.route('/auth/me', methods=['GET'])(self.get_current_user)
+
         # 系统管理接口
         self.app.route('/api/system/status', methods=['GET'])(self.get_system_status)
         self.app.route('/api/system/start', methods=['POST'])(self.start_system)
@@ -119,13 +127,54 @@ class XianyuWebAPI:
         
         # 日志接口
         self.app.route('/api/logs', methods=['GET'])(self.get_logs)
-        
-        # 静态文件服务
-        self.app.route('/', defaults={'path': ''})(self.serve_static)
-        self.app.route('/<path:path>')(self.serve_static)
+
+        # 健康检查接口
+        self.app.route('/health', methods=['GET'])(self.health_check)
+
+        # 根路径接口
+        self.app.route('/', methods=['GET'])(self.index)
     
     # ========== 系统管理接口 ==========
-    
+
+    def _auto_start_agent(self):
+        """自动启动Agent（内部方法）"""
+        try:
+            if self.system_status['running']:
+                logger.warning("系统已在运行中，跳过自动启动")
+                return True
+
+            cookies_str = os.getenv("COOKIES_STR")
+            if not cookies_str:
+                logger.error("未配置 COOKIES_STR，无法启动 Agent")
+                return False
+
+            # 创建XianyuLive实例
+            self.xianyu_live = XianyuLive(cookies_str)
+
+            # 在新线程中启动
+            def run_xianyu_live():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self.xianyu_live.main())
+                except Exception as e:
+                    logger.error(f"XianyuLive运行异常: {e}")
+                finally:
+                    loop.close()
+
+            self.live_thread = threading.Thread(target=run_xianyu_live, daemon=True)
+            self.live_thread.start()
+
+            # 更新状态
+            self.system_status['running'] = True
+            self.system_status['start_time'] = time.time()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Agent自动启动失败: {e}")
+            return False
+
     def get_system_status(self):
         """获取系统状态"""
         try:
@@ -848,27 +897,97 @@ class XianyuWebAPI:
                 'message': str(e)
             }), 500
     
+    # ========== 认证接口 ==========
+
+    def admin_login(self):
+        """管理员登录"""
+        try:
+            data = request.get_json()
+            username = data.get('username')
+            password = data.get('password')
+
+            # 简单的认证逻辑（实际应用中应使用更安全的方式）
+            if username == 'admin' and password == '123456':
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'token': 'admin-token-' + str(int(time.time())),
+                        'user': {
+                            'id': '1',
+                            'username': 'admin',
+                            'email': 'admin@xianyu.com',
+                            'role': 'admin',
+                            'createdAt': '2024-01-01T00:00:00Z'
+                        },
+                        'expiresIn': 86400
+                    }
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': '用户名或密码错误'
+                }), 401
+
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': str(e)
+            }), 500
+
+    def admin_logout(self):
+        """管理员登出"""
+        return jsonify({
+            'success': True,
+            'message': '登出成功'
+        })
+
+    def get_current_user(self):
+        """获取当前用户信息"""
+        return jsonify({
+            'success': True,
+            'data': {
+                'id': '1',
+                'username': 'admin',
+                'email': 'admin@xianyu.com',
+                'role': 'admin',
+                'createdAt': '2024-01-01T00:00:00Z'
+            }
+        })
+
     def run(self, host='0.0.0.0', port=5000, debug=False):
         """启动Web服务"""
         logger.info(f"启动Web API服务: http://{host}:{port}")
         self.app.run(host=host, port=port, debug=debug)
-    
-    def serve_static(self, path):
-        """提供静态文件服务"""
-        try:
-            if path == '':
-                path = 'index.html'
-            return send_from_directory('static', path)
-        except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': f'文件不存在: {path}'
-            }), 404
+
+    def health_check(self):
+        """健康检查接口"""
+        return jsonify({
+            'status': 'success',
+            'message': 'API server is running',
+            'timestamp': time.time()
+        })
+
+    def index(self):
+        """根路径接口"""
+        return jsonify({
+            'status': 'success',
+            'message': 'XianyuAutoAgent API Server',
+            'version': '2.0',
+            'docs': '/api'
+        })
+
+
+# 用于 gunicorn 的工厂函数
+def create_app():
+    """创建并返回 Flask 应用实例"""
+    from web_admin_api import WebAdminAPI
+    api = WebAdminAPI()
+    return api.app
 
 
 if __name__ == '__main__':
     # 创建API服务
     api = XianyuWebAPI()
-    
+
     # 启动服务
     api.run(debug=True)

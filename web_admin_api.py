@@ -869,58 +869,115 @@ class WebAdminAPI(XianyuWebAPI):
             page = request.args.get('page', 1, type=int)
             page_size = request.args.get('pageSize', 20, type=int)
             status = request.args.get('status', 'ALL')
-            
+
             # 调用闲鱼API获取商品列表
             result = self.xianyu_apis.get_user_items(page, page_size, status)
-            
+
+            logger.debug(f"闲鱼API返回原始数据: {result}")
+
             if 'error' in result:
                 return jsonify({
                     'success': False,
                     'message': result['error']
                 }), 500
-            
-            # 解析响应数据
+
+            # 解析响应数据 - 处理嵌套的data结构
+            items = []
+            total = 0
+
             if 'data' in result and result['data']:
                 items_data = result['data']
-                items = []
-                
+
+                # 闲鱼API可能返回嵌套的data结构: result['data']['data']['itemList']
+                # 或者直接的结构: result['data']['itemList']
+                actual_data = items_data.get('data', items_data)
+
+                # 尝试不同的字段名获取商品列表
+                item_list = (
+                    actual_data.get('itemList') or
+                    actual_data.get('items') or
+                    actual_data.get('list') or
+                    []
+                )
+
+                # 获取总数
+                total = (
+                    actual_data.get('totalCount') or
+                    actual_data.get('total') or
+                    actual_data.get('totalNum') or
+                    len(item_list)
+                )
+
+                logger.debug(f"解析到商品列表，数量: {len(item_list)}, 总数: {total}")
+
                 # 解析商品列表
-                if 'items' in items_data:
-                    for item in items_data['items']:
-                        items.append({
-                            'itemId': item.get('itemId', ''),
-                            'title': item.get('title', ''),
-                            'price': item.get('price', 0),
-                            'status': item.get('status', ''),
-                            'publishTime': item.get('publishTime', ''),
-                            'viewCount': item.get('viewCount', 0),
-                            'likeCount': item.get('likeCount', 0),
-                            'images': item.get('images', []),
-                            'category': item.get('category', ''),
-                            'location': item.get('location', ''),
-                        })
-                
-                return jsonify({
-                    'success': True,
-                    'data': {
-                        'list': items,
-                        'total': items_data.get('total', len(items)),
-                        'page': page,
-                        'pageSize': page_size
+                for item in item_list:
+                    # 处理不同的字段名映射
+                    item_id = item.get('itemId') or item.get('id') or item.get('item_id') or ''
+
+                    # 解析主图
+                    images = []
+                    if item.get('picUrl'):
+                        images = [item.get('picUrl')]
+                    elif item.get('images'):
+                        images = item.get('images')
+                    elif item.get('mainPic'):
+                        images = [item.get('mainPic')]
+                    elif item.get('picUrlList'):
+                        images = item.get('picUrlList')
+
+                    # 解析价格（可能是字符串或数字，单位可能是分）
+                    price = item.get('price') or item.get('soldPrice') or 0
+                    if isinstance(price, str):
+                        try:
+                            price = float(price)
+                        except:
+                            price = 0
+                    # 如果价格大于10000，可能是分为单位
+                    if price > 100000:
+                        price = price / 100
+
+                    # 解析状态
+                    status_val = item.get('status') or item.get('itemStatus') or ''
+                    # 状态映射
+                    status_map = {
+                        '0': 'ON_SALE',
+                        '1': 'SOLD_OUT',
+                        '2': 'OFFLINE',
+                        'on_sale': 'ON_SALE',
+                        'sold_out': 'SOLD_OUT',
                     }
-                })
-            else:
-                return jsonify({
-                    'success': True,
-                    'data': {
-                        'list': [],
-                        'total': 0,
-                        'page': page,
-                        'pageSize': page_size
-                    }
-                })
-            
+                    if str(status_val).lower() in status_map:
+                        status_val = status_map[str(status_val).lower()]
+
+                    items.append({
+                        'itemId': str(item_id),
+                        'title': item.get('title') or item.get('itemTitle') or '',
+                        'price': price,
+                        'originalPrice': item.get('originalPrice') or item.get('oriPrice') or price,
+                        'status': status_val or 'ON_SALE',
+                        'publishTime': item.get('publishTime') or item.get('gmtCreate') or item.get('createTime') or '',
+                        'viewCount': item.get('viewCount') or item.get('pv') or 0,
+                        'likeCount': item.get('likeCount') or item.get('favCount') or item.get('wantCount') or 0,
+                        'images': images,
+                        'category': item.get('category') or item.get('categoryName') or '',
+                        'location': item.get('location') or item.get('area') or item.get('divisionName') or '',
+                    })
+
+            return jsonify({
+                'success': True,
+                'data': {
+                    'list': items,
+                    'total': total,
+                    'page': page,
+                    'pageSize': page_size
+                }
+            })
+
         except Exception as e:
+            logger.error(f"获取闲鱼商品列表异常: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return jsonify({
                 'success': False,
                 'message': str(e)
@@ -981,40 +1038,57 @@ class WebAdminAPI(XianyuWebAPI):
             data = request.get_json()
             item_ids = data.get('itemIds', [])
             sync_all = data.get('syncAll', False)
-            
+
             synced_items = []
             failed_items = []
-            
+
             if sync_all:
                 # 同步所有商品
                 page = 1
                 page_size = 50
-                
+
                 while True:
                     result = self.xianyu_apis.get_user_items(page, page_size, 'ALL')
-                    
+
                     if 'error' in result:
+                        logger.error(f"获取商品列表失败: {result['error']}")
                         break
-                    
-                    if 'data' not in result or not result['data'].get('items'):
+
+                    # 解析嵌套的data结构
+                    if 'data' not in result or not result['data']:
                         break
-                    
-                    items = result['data']['items']
-                    
+
+                    items_data = result['data']
+                    actual_data = items_data.get('data', items_data)
+
+                    # 尝试不同的字段名获取商品列表
+                    items = (
+                        actual_data.get('itemList') or
+                        actual_data.get('items') or
+                        actual_data.get('list') or
+                        []
+                    )
+
+                    if not items:
+                        logger.info("没有更多商品")
+                        break
+
+                    logger.info(f"第 {page} 页获取到 {len(items)} 个商品")
+
                     for item in items:
-                        item_id = item.get('itemId')
+                        item_id = item.get('itemId') or item.get('id') or item.get('item_id')
                         if item_id:
-                            success = self._sync_single_item(item_id, item)
+                            success = self._sync_single_item(str(item_id), item)
                             if success:
-                                synced_items.append(item_id)
+                                synced_items.append(str(item_id))
                             else:
-                                failed_items.append(item_id)
-                    
+                                failed_items.append(str(item_id))
+
                     # 检查是否还有下一页
                     if len(items) < page_size:
                         break
                     page += 1
-                    
+
                     # 防止死循环，最多同步10页
                     if page > 10:
                         break
@@ -1022,19 +1096,24 @@ class WebAdminAPI(XianyuWebAPI):
                 # 同步指定商品
                 for item_id in item_ids:
                     # 先获取详细信息
-                    item_result = self.xianyu_apis.get_item_info(item_id)
-                    
+                    item_result = self.xianyu_apis.get_item_info(str(item_id))
+
                     if 'error' not in item_result and 'data' in item_result:
-                        item_data = item_result['data'].get('itemDO', {})
-                        success = self._sync_single_item(item_id, item_data)
-                        
+                        # 解析嵌套的data结构
+                        item_data_root = item_result['data']
+                        actual_data = item_data_root.get('data', item_data_root)
+                        item_data = actual_data.get('itemDO') or actual_data.get('item') or actual_data
+
+                        success = self._sync_single_item(str(item_id), item_data)
+
                         if success:
-                            synced_items.append(item_id)
+                            synced_items.append(str(item_id))
                         else:
-                            failed_items.append(item_id)
+                            failed_items.append(str(item_id))
                     else:
-                        failed_items.append(item_id)
-            
+                        logger.warning(f"获取商品 {item_id} 详情失败")
+                        failed_items.append(str(item_id))
+
             return jsonify({
                 'success': True,
                 'data': {
@@ -1045,8 +1124,11 @@ class WebAdminAPI(XianyuWebAPI):
                     'message': f'成功同步 {len(synced_items)} 个商品，失败 {len(failed_items)} 个'
                 }
             })
-            
+
         except Exception as e:
+            logger.error(f"同步商品异常: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return jsonify({
                 'success': False,
                 'message': str(e)
@@ -1057,59 +1139,107 @@ class WebAdminAPI(XianyuWebAPI):
         try:
             # 检查商品是否已存在
             config_file = f'./prompts/products/{item_id}_config.json'
-            
+
+            # 解析标题
+            title = (
+                item_data.get('title') or
+                item_data.get('itemTitle') or
+                item_data.get('name') or
+                '未命名商品'
+            )
+
+            # 解析描述
+            description = (
+                item_data.get('description') or
+                item_data.get('desc') or
+                item_data.get('content') or
+                ''
+            )
+
+            # 解析价格
+            price = item_data.get('price') or item_data.get('soldPrice') or 0
+            if isinstance(price, str):
+                try:
+                    price = float(price)
+                except:
+                    price = 0
+            # 如果价格大于10000，可能是分为单位
+            if price > 100000:
+                price = price / 100
+
+            original_price = item_data.get('originalPrice') or item_data.get('oriPrice') or price
+            if isinstance(original_price, str):
+                try:
+                    original_price = float(original_price)
+                except:
+                    original_price = price
+            if original_price > 100000:
+                original_price = original_price / 100
+
+            # 解析图片
+            images = []
+            if item_data.get('picUrl'):
+                images = [item_data.get('picUrl')]
+            elif item_data.get('images'):
+                images = item_data.get('images')
+            elif item_data.get('mainPic'):
+                images = [item_data.get('mainPic')]
+            elif item_data.get('picUrlList'):
+                images = item_data.get('picUrlList')
+
             # 构造商品配置
             config = {
                 'item_id': item_id,
-                'title': item_data.get('title', '未命名商品'),
-                'description': item_data.get('description', ''),
-                'price': str(item_data.get('price', 0)),
-                'original_price': str(item_data.get('originalPrice', item_data.get('price', 0))),
-                'category': item_data.get('category', '未分类'),
-                'status': item_data.get('status', 'draft'),
-                'publish_time': item_data.get('publishTime', ''),
-                'view_count': item_data.get('viewCount', 0),
-                'like_count': item_data.get('likeCount', 0),
-                'images': item_data.get('images', []),
-                'location': item_data.get('location', ''),
-                'tags': item_data.get('tags', []),
-                'condition': item_data.get('condition', ''),
+                'title': title,
+                'description': description,
+                'price': str(price),
+                'original_price': str(original_price),
+                'category': item_data.get('category') or item_data.get('categoryName') or '未分类',
+                'status': item_data.get('status') or item_data.get('itemStatus') or 'ON_SALE',
+                'publish_time': item_data.get('publishTime') or item_data.get('gmtCreate') or item_data.get('createTime') or '',
+                'view_count': item_data.get('viewCount') or item_data.get('pv') or 0,
+                'like_count': item_data.get('likeCount') or item_data.get('favCount') or item_data.get('wantCount') or 0,
+                'images': images,
+                'location': item_data.get('location') or item_data.get('area') or item_data.get('divisionName') or '',
+                'tags': item_data.get('tags') or [],
+                'condition': item_data.get('condition') or item_data.get('quality') or '',
                 'synced_from_xianyu': True,
                 'sync_time': datetime.now().isoformat(),
                 'created_at': datetime.now().isoformat(),
                 'updated_at': datetime.now().isoformat(),
                 'prompts_configured': False
             }
-            
+
             # 如果已存在，则更新同步时间
             if os.path.exists(config_file):
                 with open(config_file, 'r', encoding='utf-8') as f:
                     existing_config = json.load(f)
-                
+
                 # 保留提示词配置状态
                 config['prompts_configured'] = existing_config.get('prompts_configured', False)
                 config['created_at'] = existing_config.get('created_at', config['created_at'])
-            
+
             # 创建目录
             os.makedirs('./prompts/products', exist_ok=True)
-            
+
             # 保存配置文件
             with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
-            
+
             # 如果是新商品，创建默认提示词文件
-            if not os.path.exists(config_file) or not config['prompts_configured']:
-                for prompt_type in ['default', 'price', 'tech', 'classify']:
-                    prompt_file = f'./prompts/products/{item_id}_{prompt_type}.txt'
-                    if not os.path.exists(prompt_file):
-                        with open(prompt_file, 'w', encoding='utf-8') as f:
-                            f.write(f'# {item_id} - {prompt_type} 提示词\n\n')
-            
-            logger.info(f"商品同步成功: {item_id} - {config['title']}")
+            for prompt_type in ['default', 'price', 'tech', 'classify']:
+                prompt_file = f'./prompts/products/{item_id}_{prompt_type}.txt'
+                if not os.path.exists(prompt_file):
+                    with open(prompt_file, 'w', encoding='utf-8') as f:
+                        f.write(f'# {title} - {prompt_type} 提示词\n\n')
+
+            logger.info(f"商品同步成功: {item_id} - {title}")
             return True
-            
+
         except Exception as e:
             logger.error(f"同步商品失败 {item_id}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     # ========== Cookie 配置管理接口 ==========
