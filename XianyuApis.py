@@ -8,6 +8,7 @@ import random
 import requests
 from loguru import logger
 from utils.xianyu_utils import generate_sign
+from user_agent_pool import get_ua_pool
 
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -22,53 +23,10 @@ class XianyuApis:
         self.session.proxies = {}
         self.session.trust_env = False
         self.session.verify = False
-        
-        # 随机选择User-Agent以减少被检测的几率
-        user_agents = [
-            # Chrome - Windows
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            
-            # Chrome - macOS
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            
-            # Safari - macOS
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-            
-            # Firefox - Windows
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
-            'Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            
-            # Firefox - macOS
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 13.6; rv:122.0) Gecko/20100101 Firefox/122.0',
-            
-            # Edge - Windows
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
-            'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-            
-            # Chrome - Linux
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            
-            # 移动端 User-Agent (有些网站对移动端检测较松)
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-        ]
-        selected_ua = random.choice(user_agents)
+
+        # 使用全局 User-Agent 池
+        self.ua_pool = get_ua_pool()
+        selected_ua = self.ua_pool.get_current_http_ua()
         
         self.session.headers.update({
             'accept': 'application/json, text/plain, */*',
@@ -348,20 +306,31 @@ class XianyuApis:
 
     def get_user_items(self, page=1, page_size=20, status='ALL', retry_count=0):
         """获取用户发布的商品列表
-        
+
         Args:
             page: 页码，从1开始
             page_size: 每页数量
-            status: 商品状态 ALL/ON_SALE/SOLD_OUT
+            status: 商品状态 ALL/ON_SALE/SOLD_OUT（注意：新API可能不支持此参数）
             retry_count: 重试次数
-            
+
         Returns:
             dict: 包含商品列表的响应数据
         """
         if retry_count >= 3:
             logger.error("获取用户商品列表失败，重试次数过多")
             return {"error": "获取用户商品列表失败，重试次数过多"}
-            
+
+        # 获取userId
+        user_id = None
+        for cookie in self.session.cookies:
+            if cookie.name == 'unb':
+                user_id = cookie.value
+                break
+
+        if not user_id:
+            logger.error("无法获取userId，请检查Cookie配置")
+            return {"error": "无法获取userId"}
+
         params = {
             'jsv': '2.7.2',
             'appKey': '34839810',
@@ -372,42 +341,47 @@ class XianyuApis:
             'accountSite': 'xianyu',
             'dataType': 'json',
             'timeout': '20000',
-            'api': 'mtop.taobao.idle.user.page.my.items',
+            'api': 'mtop.idle.web.xyh.item.list',
             'sessionOption': 'AutoLoginOnly',
         }
-        
-        # 构建请求数据
-        data_val = f'{{"page":{page},"pageSize":{page_size},"status":"{status}"}}'
+
+        # 构建请求数据 - 使用新API要求的参数格式
+        data_val = f'{{"needGroupInfo":true,"pageNumber":{page},"userId":"{user_id}","pageSize":{page_size}}}'
         data = {
             'data': data_val,
         }
-        
-        # 获取token并生成签名
-        token = self.session.cookies.get('_m_h5_tk', '').split('_')[0]
+
+        # 获取token并生成签名（处理重复cookie）
+        token = ''
+        for cookie in self.session.cookies:
+            if cookie.name == '_m_h5_tk':
+                token = cookie.value.split('_')[0]
+                break
+
         sign = generate_sign(params['t'], token, data_val)
         params['sign'] = sign
-        
+
         try:
             response = self.session.post(
-                'https://h5api.m.goofish.com/h5/mtop.taobao.idle.user.page.my.items/1.0/', 
-                params=params, 
+                'https://h5api.m.goofish.com/h5/mtop.idle.web.xyh.item.list/1.0/',
+                params=params,
                 data=data
             )
-            
+
             res_json = response.json()
-            
+
             # 检查返回状态
             if isinstance(res_json, dict):
                 ret_value = res_json.get('ret', [])
                 # 检查ret是否包含成功信息
-                if not any('SUCCESS::调用成功' in ret for ret in ret_value):
+                if not any('SUCCESS' in ret for ret in ret_value):
                     logger.warning(f"用户商品列表API调用失败，错误信息: {ret_value}")
-                    
+
                     # 处理响应中的Set-Cookie
                     if 'Set-Cookie' in response.headers:
                         logger.debug("检测到Set-Cookie，更新cookie")
                         self.clear_duplicate_cookies()
-                        
+
                     time.sleep(random.uniform(1, 3))
                     return self.get_user_items(page, page_size, status, retry_count + 1)
                 else:
@@ -416,7 +390,7 @@ class XianyuApis:
             else:
                 logger.error(f"用户商品列表API返回格式异常: {res_json}")
                 return self.get_user_items(page, page_size, status, retry_count + 1)
-                
+
         except Exception as e:
             logger.error(f"用户商品列表API请求异常: {str(e)}")
             time.sleep(random.uniform(1, 2))

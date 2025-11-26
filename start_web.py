@@ -48,23 +48,43 @@ def main():
             except Exception as e:
                 logger.error(f"❌ AI Agent 自动启动异常: {e}")
 
-        # 启动服务（使用 gunicorn 生产服务器）
+        # 启动服务（开发模式使用 Flask 内置服务器）
         logger.info("🚀 Web服务启动中...")
         logger.info("📱 管理界面地址: http://localhost:5000")
         logger.info("📊 API文档地址: http://localhost:5000/api")
         logger.info("⏹️  按 Ctrl+C 停止服务")
+        logger.info("")
+        logger.info("💡 开发模式运行中（支持热重载）")
 
-        # 使用 gunicorn 启动（生产环境）
-        import subprocess
-        subprocess.run([
-            'gunicorn',
-            '--bind', '0.0.0.0:5000',
-            '--workers', '2',
-            '--timeout', '120',
-            '--access-logfile', '-',
-            '--error-logfile', '-',
-            'web_api:create_app()'
-        ])
+        # 判断运行模式
+        run_mode = os.getenv("RUN_MODE", "dev")
+
+        if run_mode == "production":
+            # 生产模式：使用 gunicorn
+            try:
+                import subprocess
+                subprocess.run([
+                    'gunicorn',
+                    '--bind', '0.0.0.0:5000',
+                    '--workers', '2',
+                    '--timeout', '120',
+                    '--access-logfile', '-',
+                    '--error-logfile', '-',
+                    'web_api:create_app()'
+                ])
+            except FileNotFoundError:
+                logger.error("❌ gunicorn 未安装，请运行: pip install gunicorn")
+                logger.info("💡 或将 .env 中的 RUN_MODE 设置为 dev")
+                sys.exit(1)
+        else:
+            # 开发模式：使用 Flask 内置服务器
+            api.app.run(
+                host='0.0.0.0',
+                port=5000,
+                debug=True,
+                use_reloader=True,
+                threaded=True
+            )
 
     except KeyboardInterrupt:
         logger.info("👋 Web服务已停止")

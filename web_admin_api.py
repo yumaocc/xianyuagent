@@ -73,6 +73,15 @@ class WebAdminAPI(XianyuWebAPI):
         self.app.route('/api/config/cookies', methods=['GET'])(self.get_cookie_config)
         self.app.route('/api/config/cookies', methods=['POST'])(self.update_cookie_config)
         self.app.route('/api/config/cookies/test', methods=['POST'])(self.test_cookie_connection)
+
+        # 发货配置管理接口
+        self.app.route('/api/delivery/configs', methods=['GET'])(self.get_delivery_configs)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['GET'])(self.get_delivery_config)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['POST'])(self.save_delivery_config)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['PUT'])(self.update_delivery_config)
+        self.app.route('/api/delivery/configs/<item_id>', methods=['DELETE'])(self.delete_delivery_config)
+        self.app.route('/api/delivery/records', methods=['GET'])(self.get_delivery_records)
+        self.app.route('/api/delivery/stats', methods=['GET'])(self.get_delivery_stats)
     
     # ========== 认证接口 ==========
     
@@ -894,6 +903,7 @@ class WebAdminAPI(XianyuWebAPI):
 
                 # 尝试不同的字段名获取商品列表
                 item_list = (
+                    actual_data.get('cardList') or
                     actual_data.get('itemList') or
                     actual_data.get('items') or
                     actual_data.get('list') or
@@ -912,22 +922,29 @@ class WebAdminAPI(XianyuWebAPI):
 
                 # 解析商品列表
                 for item in item_list:
+                    # 处理cardList结构：每个item有cardData字段
+                    card_data = item.get('cardData', item)
+
                     # 处理不同的字段名映射
-                    item_id = item.get('itemId') or item.get('id') or item.get('item_id') or ''
+                    item_id = card_data.get('id') or card_data.get('itemId') or card_data.get('item_id') or ''
 
                     # 解析主图
                     images = []
-                    if item.get('picUrl'):
-                        images = [item.get('picUrl')]
-                    elif item.get('images'):
-                        images = item.get('images')
-                    elif item.get('mainPic'):
-                        images = [item.get('mainPic')]
-                    elif item.get('picUrlList'):
-                        images = item.get('picUrlList')
+                    pic_info = card_data.get('picInfo', {})
+                    if pic_info.get('picUrl'):
+                        images = [pic_info.get('picUrl')]
+                    elif card_data.get('picUrl'):
+                        images = [card_data.get('picUrl')]
+                    elif card_data.get('images'):
+                        images = card_data.get('images')
+                    elif card_data.get('mainPic'):
+                        images = [card_data.get('mainPic')]
+                    elif card_data.get('picUrlList'):
+                        images = card_data.get('picUrlList')
 
-                    # 解析价格（可能是字符串或数字，单位可能是分）
-                    price = item.get('price') or item.get('soldPrice') or 0
+                    # 解析价格（从priceInfo或直接字段）
+                    price_info = card_data.get('priceInfo', {})
+                    price = price_info.get('price') or card_data.get('price') or card_data.get('soldPrice') or 0
                     if isinstance(price, str):
                         try:
                             price = float(price)
@@ -938,30 +955,30 @@ class WebAdminAPI(XianyuWebAPI):
                         price = price / 100
 
                     # 解析状态
-                    status_val = item.get('status') or item.get('itemStatus') or ''
+                    status_val = card_data.get('itemStatus')
                     # 状态映射
                     status_map = {
+                        0: 'ON_SALE',
+                        1: 'SOLD_OUT',
+                        2: 'OFFLINE',
                         '0': 'ON_SALE',
                         '1': 'SOLD_OUT',
                         '2': 'OFFLINE',
-                        'on_sale': 'ON_SALE',
-                        'sold_out': 'SOLD_OUT',
                     }
-                    if str(status_val).lower() in status_map:
-                        status_val = status_map[str(status_val).lower()]
+                    status_val = status_map.get(status_val, 'ON_SALE')
 
                     items.append({
                         'itemId': str(item_id),
-                        'title': item.get('title') or item.get('itemTitle') or '',
+                        'title': card_data.get('title') or card_data.get('itemTitle') or '',
                         'price': price,
-                        'originalPrice': item.get('originalPrice') or item.get('oriPrice') or price,
-                        'status': status_val or 'ON_SALE',
-                        'publishTime': item.get('publishTime') or item.get('gmtCreate') or item.get('createTime') or '',
-                        'viewCount': item.get('viewCount') or item.get('pv') or 0,
-                        'likeCount': item.get('likeCount') or item.get('favCount') or item.get('wantCount') or 0,
+                        'originalPrice': card_data.get('originalPrice') or card_data.get('oriPrice') or price,
+                        'status': status_val,
+                        'publishTime': card_data.get('publishTime') or card_data.get('gmtCreate') or card_data.get('createTime') or '',
+                        'viewCount': card_data.get('viewCount') or card_data.get('pv') or 0,
+                        'likeCount': card_data.get('likeCount') or card_data.get('favCount') or card_data.get('wantCount') or 0,
                         'images': images,
-                        'category': item.get('category') or item.get('categoryName') or '',
-                        'location': item.get('location') or item.get('area') or item.get('divisionName') or '',
+                        'category': card_data.get('category') or card_data.get('categoryName') or '',
+                        'location': card_data.get('location') or card_data.get('area') or card_data.get('divisionName') or '',
                     })
 
             return jsonify({
@@ -1063,6 +1080,7 @@ class WebAdminAPI(XianyuWebAPI):
 
                     # 尝试不同的字段名获取商品列表
                     items = (
+                        actual_data.get('cardList') or
                         actual_data.get('itemList') or
                         actual_data.get('items') or
                         actual_data.get('list') or
@@ -1076,9 +1094,11 @@ class WebAdminAPI(XianyuWebAPI):
                     logger.info(f"第 {page} 页获取到 {len(items)} 个商品")
 
                     for item in items:
-                        item_id = item.get('itemId') or item.get('id') or item.get('item_id')
+                        # 处理cardList结构
+                        card_data = item.get('cardData', item)
+                        item_id = card_data.get('id') or card_data.get('itemId') or card_data.get('item_id')
                         if item_id:
-                            success = self._sync_single_item(str(item_id), item)
+                            success = self._sync_single_item(str(item_id), card_data)
                             if success:
                                 synced_items.append(str(item_id))
                             else:
@@ -1156,8 +1176,9 @@ class WebAdminAPI(XianyuWebAPI):
                 ''
             )
 
-            # 解析价格
-            price = item_data.get('price') or item_data.get('soldPrice') or 0
+            # 解析价格（从priceInfo或直接字段）
+            price_info = item_data.get('priceInfo', {})
+            price = price_info.get('price') or item_data.get('price') or item_data.get('soldPrice') or 0
             if isinstance(price, str):
                 try:
                     price = float(price)
@@ -1178,7 +1199,10 @@ class WebAdminAPI(XianyuWebAPI):
 
             # 解析图片
             images = []
-            if item_data.get('picUrl'):
+            pic_info = item_data.get('picInfo', {})
+            if pic_info.get('picUrl'):
+                images = [pic_info.get('picUrl')]
+            elif item_data.get('picUrl'):
                 images = [item_data.get('picUrl')]
             elif item_data.get('images'):
                 images = item_data.get('images')

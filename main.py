@@ -15,6 +15,7 @@ from utils.xianyu_utils import generate_mid, generate_uuid, trans_cookies, gener
 from XianyuAgent import XianyuReplyBot
 from context_manager import ChatContextManager
 from delivery_manager import DeliveryManager
+from user_agent_pool import get_ua_pool
 
 
 class XianyuLive:
@@ -28,6 +29,11 @@ class XianyuLive:
         self.device_id = generate_device_id(self.myid)
         self.context_manager = ChatContextManager()
         self.delivery_manager = DeliveryManager()
+
+        # User-Agent 池
+        self.ua_pool = get_ua_pool()
+        # 初始化时随机选择 UA
+        self.ua_pool.rotate()
         
         # 心跳相关配置
         self.heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "15"))  # 心跳间隔，默认15秒
@@ -170,7 +176,7 @@ class XianyuLive:
                 "cache-header": "app-key token ua wv",
                 "app-key": "444e9908a51d1cb236a27862abc769c9",
                 "token": self.current_token,
-                "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 DingTalk(2.1.5) OS(Windows/10) Browser(Chrome/133.0.0.0) DingWeb/2.1.5 IMPaaS DingWeb/2.1.5",
+                "ua": self.ua_pool.get_current_websocket_ua(),
                 "dt": "j",
                 "wv": "im:3,au:3,sy:6",
                 "sync": "0,0;0;0;",
@@ -628,7 +634,7 @@ class XianyuLive:
                     "Connection": "Upgrade",
                     "Pragma": "no-cache",
                     "Cache-Control": "no-cache",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                    "User-Agent": self.ua_pool.get_current_http_ua(),
                     "Origin": "https://www.goofish.com",
                     "Accept-Encoding": "gzip, deflate, br, zstd",
                     "Accept-Language": "zh-CN,zh;q=0.9",
